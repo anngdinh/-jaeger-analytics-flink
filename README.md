@@ -1,7 +1,1 @@
-
-mvn archetype:generate                \
-  -DarchetypeGroupId=org.apache.flink   \
-  -DarchetypeArtifactId=flink-quickstart-java \
-  -DarchetypeVersion=1.16.0
-
-
+Run the below command. It will further run the Flink application you just created.
