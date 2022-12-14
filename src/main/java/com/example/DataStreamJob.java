@@ -18,18 +18,26 @@
 
 package com.example;
 
+import com.example.deserializer.SpanDeserializer;
+import com.example.model.Dependency;
+import com.example.model.SpanModel;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+
 import org.apache.flink.api.common.functions.FlatMapFunction;
-import org.apache.flink.api.java.DataSet;
-import org.apache.flink.api.java.ExecutionEnvironment;
+import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
-import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
+import org.apache.flink.streaming.api.windowing.assigners.TumblingProcessingTimeWindows;
+import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.util.Collector;
-import org.apache.kafka.common.serialization.StringDeserializer;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Skeleton for a Flink DataStream Job.
@@ -44,48 +52,92 @@ import org.apache.kafka.common.serialization.StringDeserializer;
  * method, change the respective entry in the POM.xml file (simply search for 'mainClass').
  */
 public class DataStreamJob {
+    private static Map<String, String> traceIdToService = new HashMap<String, String>();
+    public static void main(String[] args) throws Exception {
+        // Sets up the execution environment, which is the main entry point
+        // to building Flink applications.
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-    // *************************************************************************
-   // PROGRAM
-   // *************************************************************************
-   public static void main(String[] args) throws Exception {
-	final ParameterTool params = ParameterTool.fromArgs(args);
-	// set up the execution environment
-	final ExecutionEnvironment env = ExecutionEnvironment.getExecutionEnvironment();
-	// make parameters available in the web interface
-	env.getConfig().setGlobalJobParameters(params);
-	// get input data
-	DataSet<String> text = env.readTextFile(params.get("input"));
-	DataSet<Tuple2<String, Integer>> counts =
-	// split up the lines in pairs (2-tuples) containing: (word,1)
-	text.flatMap(new Tokenizer())
-	// group by the tuple field "0" and sum up tuple field "1"
-	.groupBy(0)
-	.sum(1);
-	// emit result
-	if (params.has("output")) {
-	   counts.writeAsCsv(params.get("output"), "\n", " ");
-	   // execute program
-	   env.execute("My Example");
-	} else {
-	   System.out.println("Printing result to stdout. Use --output to specify output path.");
-	   counts.print();
-	}
- }
- 
- // *************************************************************************
- // USER FUNCTIONS
- // *************************************************************************
- public static final class Tokenizer implements FlatMapFunction<String, Tuple2<String, Integer>> {
-	public void flatMap(String value, Collector<Tuple2<String, Integer>> out) {
-	   // normalize and split the line
-	   String[] tokens = value.toLowerCase().split("\\W+");
-	   // emit the pairs
-	   for (String token : tokens) {
-		  if (token.length() > 0) {
-			 out.collect(new Tuple2<>(token, 1));
-		  }
-	   }
-	}
- }
+        KafkaSource<SpanModel> source = KafkaSource.<SpanModel>builder()
+                .setBootstrapServers("103.245.251.90:9093")
+                .setTopics("tracing-dev-stg")
+                .setGroupId("dev-stg-consumer")
+                .setStartingOffsets(OffsetsInitializer.earliest())
+                // .setValueOnlyDeserializer(new SimpleStringSchema())
+                .setValueOnlyDeserializer(new SpanDeserializer())
+
+                .setProperty("security.protocol", "SSL")
+                .setProperty("ssl.keystore.location", "/home/annd2/Documents/SPM/jaeger-analytics/admin.key")
+                .setProperty("ssl.keystore.password", "OqLxuB0UeJY9FnNfVohVVzG5UhgdKbG5")
+                .setProperty("ssl.key.password", "OqLxuB0UeJY9FnNfVohVVzG5UhgdKbG5")
+
+                .setProperty("ssl.truststore.location", "/home/annd2/Documents/SPM/jaeger-analytics/VNG.trust")
+                .setProperty("ssl.truststore.password", "JAnlbz9zqAEHK9870IVLwfbV7ASk081k")
+                .setProperty("ssl.endpoint.identification.algorithm", "")
+
+                .build();
+
+        DataStream<SpanModel> temp = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
+
+//        DataStreamJob.printPairTrace(temp);
+
+        DataStream<Tuple3<String, String, Integer>> dataStream = temp
+                .flatMap(new NYCEnrichment())
+                .keyBy(value -> (value.f0 + value.f1))
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+                .sum(2);
+        dataStream.print();
+
+
+
+        env.execute("Flink Java API Skeleton");
+    }
+
+
+
+    public static void printPairTrace(DataStream<SpanModel> temp) {
+        DataStream<Tuple3<String, String, Integer>> pairDependency = temp
+                .map(new MapFunction<SpanModel, Tuple3<String, String, Integer>>() {
+                    @Override
+                    public Tuple3<String, String, Integer> map(SpanModel spanModel) throws Exception {
+                        String serviceName = spanModel.getProcess().getServiceName();
+                        traceIdToService.put(spanModel.getTraceId(), serviceName);
+                        String refTrace = null;
+                        if (spanModel.getReferences() != null){
+                            refTrace = spanModel.getReferences().get(0).get("traceId");
+                            if (traceIdToService.get(refTrace) != null) {
+                                String refService = traceIdToService.get(refTrace);
+                                return new Tuple3<>(serviceName, refService,1);
+                            }
+                        }
+                        return new Tuple3<>(serviceName, refTrace,1);
+                    }
+                });
+        pairDependency.print();
+    }
+
+
+    public static class NYCEnrichment implements FlatMapFunction<SpanModel, Tuple3<String, String, Integer>> {
+        @Override
+        public void flatMap(SpanModel spanModel, Collector<Tuple3<String, String, Integer>> out) throws Exception {
+
+            String serviceName = spanModel.getProcess().getServiceName();
+            traceIdToService.put(spanModel.getTraceId(), serviceName);
+            String refTrace = null;
+            if (spanModel.getReferences() != null){
+                refTrace = spanModel.getReferences().get(0).get("traceId");
+                if (traceIdToService.get(refTrace) != null) {
+                    String refService = traceIdToService.get(refTrace);
+                    out.collect(new Tuple3<String, String, Integer>(serviceName, refService, 1));
+                }
+            }
+
+//            else {
+//                out.collect(new Tuple3<String, String, Integer>(serviceName, refTrace, 1));
+//            } 
+//            ................................
+
+        }
+    }
+
 }
