@@ -37,3 +37,5 @@ admin.key
 client-ssl.properties
 VNG.trust
 makefile
+
+config.properties

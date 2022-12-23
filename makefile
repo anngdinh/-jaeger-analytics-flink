@@ -35,3 +35,10 @@ tail:
 
 example:
 	cd /home/annd2/Downloads/flink-1.16.0 && ./bin/flink run examples/streaming/WordCount.jar
+
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
