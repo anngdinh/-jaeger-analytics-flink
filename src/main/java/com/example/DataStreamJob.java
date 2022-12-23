@@ -19,7 +19,6 @@
 package com.example;
 
 import com.example.deserializer.SpanDeserializer;
-import com.example.model.Dependency;
 import com.example.model.SpanModel;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 
