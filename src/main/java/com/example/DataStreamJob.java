@@ -24,6 +24,7 @@ import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.tuple.Tuple3;
 import org.apache.flink.connector.elasticsearch.sink.Elasticsearch7SinkBuilder;
 import org.apache.flink.connector.kafka.source.KafkaSource;
@@ -98,11 +99,21 @@ public class DataStreamJob {
                 .keyBy(value -> (value.f0 + value.f1))
                 .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
                 .sum(2);
-//         dataStream.print();
+
+        DataStream<ArrayList<Tuple3<String, String, Integer>>> arr = dataStream
+                .flatMap(new FlatTraceDataArray())
+                .windowAll(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+                .reduce ((ReduceFunction<ArrayList<Tuple3<String, String, Integer>>>) (array, value2) -> {
+                    array.add(value2.get(0));
+                    return array;
+                });
 
 
-        dataStream.sinkTo(
-                new Elasticsearch7SinkBuilder<Tuple3<String, String, Integer>>()
+        arr.print();
+
+
+        arr.sinkTo(
+                new Elasticsearch7SinkBuilder<ArrayList<Tuple3<String, String, Integer>>>()
 //                        .setBulkFlushInterval(5000)
                         .setBulkFlushMaxActions(1) // Instructs the sink to emit after every element, otherwise they would be buffered
                         .setHosts(new HttpHost(prop.getProperty("es.host"), 9200, "http"))
@@ -110,7 +121,8 @@ public class DataStreamJob {
                         .setConnectionPassword(prop.getProperty("es.password"))
                         .setEmitter(
                                 (element, context, indexer) ->
-                                        indexer.add(createCloneSpark(element.f0, element.f1, element.f2)))
+//                                        indexer.add(createCloneSpark(element.f0, element.f1, element.f2)))
+                                        indexer.add(createCloneSparkArray(element)))
                         .build());
 
         env.execute("Flink Java API Skeleton");
@@ -118,7 +130,7 @@ public class DataStreamJob {
 
 
     private static IndexRequest createCloneSpark(String parent, String child, Integer callCount) {
-        Map<String, Object> data = new HashMap<String, Object>();
+        Map<String, Object> data = new MaxSizeHashMap<String, Object>(100);
         data.put("parent", parent);
         data.put("child", child);
         data.put("callCount", callCount);
@@ -141,6 +153,31 @@ public class DataStreamJob {
                 .source(json);
 
 
+    }
+
+    private static IndexRequest createCloneSparkArray(ArrayList<Tuple3<String, String, Integer>> arr) {
+        ArrayList<Object> str = new ArrayList<Object>();
+
+        for (int i = 0; i < arr.size(); i++) {
+            Tuple3<String, String, Integer> tuple3 = arr.get(i);
+            Map<String, Object> data = new HashMap<String, Object>();
+            data.put("parent", tuple3.f0);
+            data.put("child", tuple3.f1);
+            data.put("callCount", tuple3.f2);
+            data.put("source", "jaeger");
+
+            str.add(data);
+        }
+
+        Map<String, Object> json = new HashMap<String, Object>();
+        json.put("dependencies", str);
+
+        Instant currentTimeStamp = Instant.now();
+        json.put("timestamp", currentTimeStamp);
+
+        return Requests.indexRequest()
+                .index("tracing-dev-stg-jaeger-dependencies-2022-12-23")
+                .source(json);
     }
 
 
@@ -181,6 +218,9 @@ public class DataStreamJob {
                     String refService = spanIdToService.get(refSpan);
                     out.collect(new Tuple3<String, String, Integer>(serviceName, refService, 1));
                 }
+                else {
+                    System.out.println("\n\nERR: Not handle null span reference !\n");
+                }
             }
 
 //            else {
@@ -191,4 +231,21 @@ public class DataStreamJob {
         }
     }
 
+    public static class FlatTraceDataArray implements FlatMapFunction<Tuple3<String, String, Integer>, ArrayList<Tuple3<String, String, Integer>>> {
+        @Override
+        public void flatMap(Tuple3<String, String, Integer> tuple3, Collector<ArrayList<Tuple3<String, String, Integer>>> out) throws Exception {
+            ArrayList<Tuple3<String, String, Integer>> arr = new ArrayList<Tuple3<String, String, Integer>>();
+            arr.add(tuple3);
+            out.collect(arr);
+
+        }
+
+//            else {
+//                out.collect(new Tuple3<String, String, Integer>(serviceName, refSpan, 1));
+//            }
+//            ................................
+
+    }
 }
+
+

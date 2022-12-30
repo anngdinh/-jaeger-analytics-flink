@@ -1,6 +1,0 @@
-The program finished with the following exception
-
-
-chưa xử lí những trường hợp null
-chưa xử lí ghi 5s 1 lần, ghi nhiều có thể es chịu ko nổi
-luồng ci/cd
