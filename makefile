@@ -8,9 +8,9 @@ build:
 	mvn clean package
 
 run: 
-	# /home/annd2/Downloads/flink-1.16.0/bin/flink run ./target/jaeger-analytics-1.0-SNAPSHOT.jar
+	/home/annd2/Downloads/flink-1.16.0/bin/flink run ./target/jaeger-analytics-1.0-SNAPSHOT.jar
 
-	/home/annd2/Downloads/flink-1.16.0/bin/flink run ./target/jaeger-analytics-1.0-SNAPSHOT.jar --input /home/annd2/Documents/SPM/jaeger-analytics/text.txt --output /home/annd2/Documents/SPM/jaeger-analytics/output
+	# /home/annd2/Downloads/flink-1.16.0/bin/flink run ./target/jaeger-analytics-1.0-SNAPSHOT.jar --input /home/annd2/Documents/SPM/jaeger-analytics/text.txt --output /home/annd2/Documents/SPM/jaeger-analytics/output
 
 all: build run
 
@@ -42,3 +42,11 @@ up:
 
 down:
 	docker compose down
+
+copy:
+	scp -r -P 234 /home/annd2/Documents/SPM/jaeger-analytics annd2@58.84.2.245:/home/annd2/flink
+
+start:
+	cd /home/annd2/flink/flink-1.16.0 && ./bin/start-cluster.sh
+stop:
+	cd /home/annd2/flink/flink-1.16.0 && ./bin/stop-cluster.sh

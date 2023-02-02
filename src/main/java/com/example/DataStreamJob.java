@@ -42,6 +42,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.*;
 
 /**
@@ -72,28 +73,24 @@ public class DataStreamJob {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         KafkaSource<SpanModel> source = KafkaSource.<SpanModel>builder()
-                .setBootstrapServers(prop.getProperty("bootstrap.servers"))
-                .setTopics(prop.getProperty("topic"))
-                .setGroupId(prop.getProperty("groupid"))
-                .setStartingOffsets(OffsetsInitializer.earliest())
-                // .setValueOnlyDeserializer(new SimpleStringSchema())
+                .setBootstrapServers(prop.getProperty("kafka.bootstrap.servers"))
+                .setTopics(prop.getProperty("kafka.topic"))
+                .setGroupId(prop.getProperty("kafka.groupid"))
+                .setStartingOffsets(OffsetsInitializer.latest())
                 .setValueOnlyDeserializer(new SpanDeserializer())
 
-                .setProperty("security.protocol", prop.getProperty("security.protocol"))
-                .setProperty("ssl.keystore.location", prop.getProperty("ssl.keystore.location"))
-                .setProperty("ssl.keystore.password", prop.getProperty("ssl.keystore.password"))
-                .setProperty("ssl.key.password", prop.getProperty("ssl.key.password"))
+                .setProperty("security.protocol", prop.getProperty("kafka.security.protocol"))
+                .setProperty("ssl.keystore.location", prop.getProperty("kafka.ssl.keystore.location"))
+                .setProperty("ssl.keystore.password", prop.getProperty("kafka.ssl.keystore.password"))
+                .setProperty("ssl.key.password", prop.getProperty("kafka.ssl.key.password"))
 
-                .setProperty("ssl.truststore.location", prop.getProperty("ssl.truststore.location"))
-                .setProperty("ssl.truststore.password", prop.getProperty("ssl.truststore.password"))
-                .setProperty("ssl.endpoint.identification.algorithm", prop.getProperty("ssl.endpoint.identification.algorithm"))
+                .setProperty("ssl.truststore.location", prop.getProperty("kafka.ssl.truststore.location"))
+                .setProperty("ssl.truststore.password", prop.getProperty("kafka.ssl.truststore.password"))
+                .setProperty("ssl.endpoint.identification.algorithm", prop.getProperty("kafka.ssl.endpoint.identification.algorithm"))
 
                 .build();
 
         DataStream<SpanModel> temp = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
-
-//         DataStreamJob.printPairTrace(temp);
-
         DataStream<Tuple3<String, String, Integer>> dataStream = temp
                 .flatMap(new FlatTraceData())
                 .keyBy(value -> (value.f0 + value.f1))
@@ -108,9 +105,7 @@ public class DataStreamJob {
                     return array;
                 });
 
-
         arr.print();
-
 
         arr.sinkTo(
                 new Elasticsearch7SinkBuilder<ArrayList<Tuple3<String, String, Integer>>>()
@@ -128,33 +123,34 @@ public class DataStreamJob {
         env.execute("Flink Java API Skeleton");
     }
 
+    public static class FlatTraceData implements FlatMapFunction<SpanModel, Tuple3<String, String, Integer>> {
+        @Override
+        public void flatMap(SpanModel spanModel, Collector<Tuple3<String, String, Integer>> out) throws Exception {
 
-    private static IndexRequest createCloneSpark(String parent, String child, Integer callCount) {
-        Map<String, Object> data = new MaxSizeHashMap<String, Object>(100);
-        data.put("parent", parent);
-        data.put("child", child);
-        data.put("callCount", callCount);
-        data.put("source", "jaeger");
-
-        ArrayList<Object> str = new ArrayList<Object>();
-        str.add(data);
-//        str.add(data);
-
-        Map<String, Object> json = new HashMap<String, Object>();
-        json.put("dependencies", str);
-
-        Instant currentTimeStamp = Instant.now();
-        json.put("timestamp", currentTimeStamp);
-
-
-
-        return Requests.indexRequest()
-                .index("tracing-dev-stg-jaeger-dependencies-2022-12-23")
-                .source(json);
-
-
+            String serviceName = spanModel.getProcess().getServiceName();
+            spanIdToService.put(spanModel.getSpanId(), serviceName);
+            String refSpan = null;
+            if (spanModel.getReferences() != null){
+                refSpan = spanModel.getReferences().get(0).get("spanId");
+                if (spanIdToService.get(refSpan) != null) {
+                    String refService = spanIdToService.get(refSpan);
+                    out.collect(new Tuple3<String, String, Integer>(serviceName, refService, 1));
+                }
+                else {
+                    System.out.println("\n\nERR: Not handle null span reference !\n");
+                }
+            }
+        }
     }
 
+    public static class FlatTraceDataArray implements FlatMapFunction<Tuple3<String, String, Integer>, ArrayList<Tuple3<String, String, Integer>>> {
+        @Override
+        public void flatMap(Tuple3<String, String, Integer> tuple3, Collector<ArrayList<Tuple3<String, String, Integer>>> out) throws Exception {
+            ArrayList<Tuple3<String, String, Integer>> arr = new ArrayList<Tuple3<String, String, Integer>>();
+            arr.add(tuple3);
+            out.collect(arr);
+        }
+    }
     private static IndexRequest createCloneSparkArray(ArrayList<Tuple3<String, String, Integer>> arr) {
         ArrayList<Object> str = new ArrayList<Object>();
 
@@ -175,77 +171,14 @@ public class DataStreamJob {
         Instant currentTimeStamp = Instant.now();
         json.put("timestamp", currentTimeStamp);
 
+        LocalDate currentDate = LocalDate.now();
+
         return Requests.indexRequest()
-                .index("tracing-dev-stg-jaeger-dependencies-2022-12-23")
+                .index("tracing-dev-stg-jaeger-dependencies-" + currentDate.toString())
                 .source(json);
     }
 
-
-    public static void printPairTrace(DataStream<SpanModel> temp) {
-        DataStream<Tuple3<String, String, Integer>> pairDependency = temp
-                .map(new MapFunction<SpanModel, Tuple3<String, String, Integer>>() {
-                    @Override
-                    public Tuple3<String, String, Integer> map(SpanModel spanModel) throws Exception {
-                        String serviceName = spanModel.getProcess().getServiceName();
-                        spanIdToService.put(spanModel.getSpanId(), serviceName);
-                        String refSpan = null;
-                        if (spanModel.getReferences() != null){
-                            refSpan = spanModel.getReferences().get(0).get("spanId");
-                            if (spanIdToService.get(refSpan) != null) {
-                                String refService = spanIdToService.get(refSpan);
-                                // if (!serviceName.equals(refService)) System.out.print("\n*" + serviceName + "*\n*" + refService + "*\n");
-                                // else System.out.print("\n-------------\n");
-                                return new Tuple3<>(serviceName, refService,1);
-                            }
-                        }
-                        // if (refSpan==null) System.out.print("null\n");
-                        return new Tuple3<>(serviceName, refSpan,1);
-                    }
-                });
-        pairDependency.print();
-    }
-
-    public static class FlatTraceData implements FlatMapFunction<SpanModel, Tuple3<String, String, Integer>> {
-        @Override
-        public void flatMap(SpanModel spanModel, Collector<Tuple3<String, String, Integer>> out) throws Exception {
-
-            String serviceName = spanModel.getProcess().getServiceName();
-            spanIdToService.put(spanModel.getSpanId(), serviceName);
-            String refSpan = null;
-            if (spanModel.getReferences() != null){
-                refSpan = spanModel.getReferences().get(0).get("spanId");
-                if (spanIdToService.get(refSpan) != null) {
-                    String refService = spanIdToService.get(refSpan);
-                    out.collect(new Tuple3<String, String, Integer>(serviceName, refService, 1));
-                }
-                else {
-                    System.out.println("\n\nERR: Not handle null span reference !\n");
-                }
-            }
-
-//            else {
-//                out.collect(new Tuple3<String, String, Integer>(serviceName, refSpan, 1));
-//            }
-//            ................................
-
-        }
-    }
-
-    public static class FlatTraceDataArray implements FlatMapFunction<Tuple3<String, String, Integer>, ArrayList<Tuple3<String, String, Integer>>> {
-        @Override
-        public void flatMap(Tuple3<String, String, Integer> tuple3, Collector<ArrayList<Tuple3<String, String, Integer>>> out) throws Exception {
-            ArrayList<Tuple3<String, String, Integer>> arr = new ArrayList<Tuple3<String, String, Integer>>();
-            arr.add(tuple3);
-            out.collect(arr);
-
-        }
-
-//            else {
-//                out.collect(new Tuple3<String, String, Integer>(serviceName, refSpan, 1));
-//            }
-//            ................................
-
-    }
 }
 
+// SpanModel ---- FlatTraceData (5s) ----> Tuple3<service, parentService, count: int> ----FlatTraceDataArray and ReduceFunction----> ArrayList<Tuple3<String, String, Integer>> ----> sinkToES
 
