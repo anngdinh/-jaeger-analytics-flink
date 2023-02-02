@@ -1,0 +1,84 @@
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: JOBNAME
+spec:
+  image: hub.vngcloud.tech/ENV/IMGTAG
+  flinkVersion: v1_15
+  imagePullPolicy: Always
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+    jobmanager.memory.process.size: 1000mb
+    state.backend: filesystem
+    state.savepoints.dir: s3://JOBNAME/savepoints
+    state.checkpoints.dir: s3://JOBNAME/checkpoints
+    high-availability: org.apache.flink.kubernetes.highavailability.KubernetesHaServicesFactory
+    high-availability.storageDir: s3://JOBNAME/ha
+    s3.endpoint: http://minio.vmonitor-platform-storage:9000
+    s3.access-key: ACCESS_KEY
+    s3.secret-key: SECRET_KEY
+    s3.path.style.access: "true"
+    execution.checkpointing.interval: 10s
+    execution.checkpointing.unaligned: "true"
+    kubernetes.jobmanager.node-selector: 'flink-vmonitor:"true"'
+    kubernetes.jobmanager.tolerations: 'key:flink-metric,operator:Equal,value:"true",effect:NoSchedule'
+    kubernetes.taskmanager.node-selector: 'flink-vmonitor:"true"'
+    kubernetes.taskmanager.tolerations: 'key:flink-metric,operator:Equal,value:"true",effect:NoSchedule'
+    metrics.reporters: prom
+    metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter
+    metrics.reporter.prom.port: "9999"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: JOBNAME
+    spec:
+      serviceAccount: flink
+      containers:
+        # Do not change the main container name
+        - name: flink-main-container
+          env:
+            - name: ENABLE_BUILT_IN_PLUGINS
+              value: flink-s3-fs-hadoop-1.15.2.jar
+      imagePullSecrets:
+        - name: docker-dev
+  serviceAccount: flink
+  jobManager:
+    replicas: 1
+    resource:
+      memory: "1G"
+      cpu: 1
+  taskManager:
+    replicas: 2
+    resource:
+      memory: "1G"
+      cpu: 1
+  job:
+    jarURI: local:///opt/flink/JOBNAME.jar
+    upgradeMode: last-state
+  logConfiguration:
+    "log4j-console.properties": |
+      rootLogger.level = INFO
+      rootLogger.appenderRef.file.ref = LogFile
+      rootLogger.appenderRef.console.ref = LogConsole
+      appender.file.name = LogFile
+      appender.file.type = File
+      appender.file.append = false
+      appender.file.fileName = ${sys:log.file}
+      appender.file.layout.type = PatternLayout
+      appender.file.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+      appender.console.name = LogConsole
+      appender.console.type = CONSOLE
+      appender.console.layout.type = PatternLayout
+      appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+      logger.akka.name = akka
+      logger.akka.level = INFO
+      logger.kafka.name= org.apache.kafka
+      logger.kafka.level = INFO
+      logger.hadoop.name = org.apache.hadoop
+      logger.hadoop.level = INFO
+      logger.zookeeper.name = org.apache.zookeeper
+      logger.zookeeper.level = INFO
+      logger.netty.name = org.apache.flink.shaded.akka.org.jboss.netty.channel.DefaultChannelPipeline
+      logger.netty.level = OFF
+
