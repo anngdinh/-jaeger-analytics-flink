@@ -26,6 +26,7 @@ import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.functions.ReduceFunction;
 import org.apache.flink.api.java.tuple.Tuple3;
+import org.apache.flink.api.java.utils.ParameterTool;
 import org.apache.flink.connector.elasticsearch.sink.Elasticsearch7SinkBuilder;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
@@ -60,8 +61,11 @@ import java.util.*;
 public class DataStreamJob {
     private static Map<String, String> spanIdToService = new HashMap<String, String>();
     public static void main(String[] args) throws Exception {
+        ParameterTool parameters = ParameterTool.fromArgs(args);
+        String pathConfigFile = parameters.getRequired("config-file");
+
         Properties prop = new Properties();
-        try (InputStream input = new FileInputStream("src/main/resources/config.properties")) {
+        try (InputStream input = new FileInputStream(pathConfigFile)) {
             // load a properties file
             prop.load(input);
         } catch (IOException ex) {
