@@ -59,7 +59,7 @@ import java.util.*;
  * method, change the respective entry in the POM.xml file (simply search for 'mainClass').
  */
 public class DataStreamJob {
-    private static Map<String, String> spanIdToService = new HashMap<String, String>();
+    private static MaxSizeHashMap<String, String> spanIdToService = new MaxSizeHashMap<String, String>(1000);
     public static void main(String[] args) throws Exception {
         ParameterTool parameters = ParameterTool.fromArgs(args);
         String pathConfigFile = parameters.getRequired("config-file");
