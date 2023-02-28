@@ -93,6 +93,8 @@ public class DataStreamJob {
                 .setProperty("ssl.endpoint.identification.algorithm", prop.getProperty("kafka.ssl.endpoint.identification.algorithm"))
 
                 .build();
+        final String esPrefixName;
+        esPrefixName = prop.getProperty("es.prefixName");
 
         DataStream<SpanModel> temp = env.fromSource(source, WatermarkStrategy.noWatermarks(), "Kafka Source");
         DataStream<Tuple3<String, String, Integer>> dataStream = temp
@@ -121,10 +123,10 @@ public class DataStreamJob {
                         .setEmitter(
                                 (element, context, indexer) ->
 //                                        indexer.add(createCloneSpark(element.f0, element.f1, element.f2)))
-                                        indexer.add(createCloneSparkArray(element)))
+                                        indexer.add(createCloneSparkArray(esPrefixName, element)))
                         .build());
 
-        env.execute("Flink Java API Skeleton");
+        env.execute(prop.getProperty("jobName"));
     }
 
     public static class FlatTraceData implements FlatMapFunction<SpanModel, Tuple3<String, String, Integer>> {
@@ -155,7 +157,7 @@ public class DataStreamJob {
             out.collect(arr);
         }
     }
-    private static IndexRequest createCloneSparkArray(ArrayList<Tuple3<String, String, Integer>> arr) {
+    private static IndexRequest createCloneSparkArray(String esPrefixName, ArrayList<Tuple3<String, String, Integer>> arr) {
         ArrayList<Object> str = new ArrayList<Object>();
 
         for (int i = 0; i < arr.size(); i++) {
@@ -177,8 +179,9 @@ public class DataStreamJob {
 
         LocalDate currentDate = LocalDate.now();
 
+        String indexName = esPrefixName + currentDate.toString();
         return Requests.indexRequest()
-                .index("tracing-dev-stg-jaeger-dependencies-" + currentDate.toString())
+                .index(indexName)
                 .source(json);
     }
 
