@@ -4,11 +4,11 @@ metadata:
   name: JOBNAME
 spec:
   image: hub.vngcloud.tech/ENV/IMGTAG
-  flinkVersion: v1_15
+  flinkVersion: v1_16
   imagePullPolicy: Always
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "2"
-    jobmanager.memory.process.size: 1000mb
+    #jobmanager.memory.process.size: 1000mb
     state.backend: filesystem
     state.savepoints.dir: s3://JOBNAME/savepoints
     state.checkpoints.dir: s3://JOBNAME/checkpoints
@@ -18,7 +18,7 @@ spec:
     s3.access-key: ACCESS_KEY
     s3.secret-key: SECRET_KEY
     s3.path.style.access: "true"
-    execution.checkpointing.interval: 10s
+    execution.checkpointing.interval: 60s
     execution.checkpointing.unaligned: "true"
     kubernetes.jobmanager.node-selector: 'flink-vmonitor:"true"'
     kubernetes.jobmanager.tolerations: 'key:flink-metric,operator:Equal,value:"true",effect:NoSchedule'
@@ -39,7 +39,7 @@ spec:
         - name: flink-main-container
           env:
             - name: ENABLE_BUILT_IN_PLUGINS
-              value: flink-s3-fs-hadoop-1.15.2.jar
+              value: flink-s3-fs-hadoop-1.16.0.jar
       imagePullSecrets:
         - name: docker-dev
   serviceAccount: flink
@@ -49,7 +49,7 @@ spec:
       memory: "1G"
       cpu: 1
   taskManager:
-    replicas: 2
+    replicas: 1
     resource:
       memory: "1G"
       cpu: 1
