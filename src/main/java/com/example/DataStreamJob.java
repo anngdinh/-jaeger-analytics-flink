@@ -59,7 +59,10 @@ import java.util.*;
  * method, change the respective entry in the POM.xml file (simply search for 'mainClass').
  */
 public class DataStreamJob {
-    private static MaxSizeHashMap<String, String> spanIdToService = new MaxSizeHashMap<String, String>(1000);
+    private static MaxSizeHashMap<String, String> spanIdToService = new MaxSizeHashMap<String, String>(3000);
+    private static ArrayList<String> serviceNameList = new ArrayList<String>(200);
+    private static Integer totalCount = 0, missCount = 0, getCount = 0;
+    private static final Integer INTERVAL = 10;
     public static void main(String[] args) throws Exception {
         ParameterTool parameters = ParameterTool.fromArgs(args);
         String pathConfigFile = parameters.getRequired("config-file");
@@ -100,12 +103,18 @@ public class DataStreamJob {
         DataStream<Tuple3<String, String, Integer>> dataStream = temp
                 .flatMap(new FlatTraceData())
                 .keyBy(value -> (value.f0 + value.f1))
-                .window(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(INTERVAL)))
                 .sum(2);
 
-        DataStream<ArrayList<Tuple3<String, String, Integer>>> arr = dataStream
+        DataStream<Tuple3<String, String, Integer>> dataStream2 = dataStream
+                .flatMap(new FlatTraceData2())
+                .keyBy(value -> (value.f0 + value.f1))
+                .window(TumblingProcessingTimeWindows.of(Time.seconds(INTERVAL)))
+                .sum(2);
+
+        DataStream<ArrayList<Tuple3<String, String, Integer>>> arr = dataStream2
                 .flatMap(new FlatTraceDataArray())
-                .windowAll(TumblingProcessingTimeWindows.of(Time.seconds(5)))
+                .windowAll(TumblingProcessingTimeWindows.of(Time.seconds(INTERVAL)))
                 .reduce ((ReduceFunction<ArrayList<Tuple3<String, String, Integer>>>) (array, value2) -> {
                     array.add(value2.get(0));
                     return array;
@@ -132,19 +141,35 @@ public class DataStreamJob {
     public static class FlatTraceData implements FlatMapFunction<SpanModel, Tuple3<String, String, Integer>> {
         @Override
         public void flatMap(SpanModel spanModel, Collector<Tuple3<String, String, Integer>> out) throws Exception {
-
             String serviceName = spanModel.getProcess().getServiceName();
             spanIdToService.put(spanModel.getSpanId(), serviceName);
-            String refSpan = null;
+            totalCount++;
             if (spanModel.getReferences() != null){
-                refSpan = spanModel.getReferences().get(0).get("spanId");
-                if (spanIdToService.get(refSpan) != null) {
-                    String refService = spanIdToService.get(refSpan);
-                    out.collect(new Tuple3<String, String, Integer>(serviceName, refService, 1));
-                }
-                else {
-                    System.out.println("\n\nERR: Not handle null span reference !\n");
-                }
+                String refSpan = spanModel.getReferences().get(0).get("spanId");
+                out.collect(new Tuple3<String, String, Integer>(serviceName, refSpan, 1));  // (child, parent, count)
+            }
+            else {
+                getCount++;
+            }
+        }
+    }
+
+    public static class FlatTraceData2 implements FlatMapFunction<Tuple3<String, String, Integer>, Tuple3<String, String, Integer>> {
+        @Override
+        public void flatMap(Tuple3<String, String, Integer> tuple3, Collector<Tuple3<String, String, Integer>> out) throws Exception {
+            String parentService = "";
+            if (spanIdToService.get(tuple3.f1) != null) {
+                parentService = spanIdToService.get(tuple3.f1);
+            }
+
+            if (parentService == "") {
+                missCount++;
+                float i = ((float)missCount / totalCount) * 100;
+                System.out.println(String.format("ERR: Not handle null span reference : %d / %d = %f     get: %d ", missCount, totalCount, i, getCount));
+            }
+            else {
+                getCount++;
+                out.collect(new Tuple3<String, String, Integer>(tuple3.f0, parentService, tuple3.f2));  // (child, parent, count)
             }
         }
     }
@@ -163,8 +188,8 @@ public class DataStreamJob {
         for (int i = 0; i < arr.size(); i++) {
             Tuple3<String, String, Integer> tuple3 = arr.get(i);
             Map<String, Object> data = new HashMap<String, Object>();
-            data.put("parent", tuple3.f0);
-            data.put("child", tuple3.f1);
+            data.put("parent", tuple3.f1);
+            data.put("child", tuple3.f0);
             data.put("callCount", tuple3.f2);
             data.put("source", "jaeger");
 
